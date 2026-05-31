@@ -1,209 +1,108 @@
-# Preliminary Roadside Tree Risk Screening Report
+# Introduction
 
-## Introduction
+Describe UAV roadside tree/canopy screening and why preliminary image-based prioritization is useful.
 
-State the objective of the work: to evaluate the feasibility of detecting roadside trees or vegetation from imagery, extracting interpretable geometric and contextual features, and producing a preliminary risk ranking for review.
+# Related Work
 
-Clarify that this is a screening pipeline, not a certified arborist inspection or production safety assessment.
+Summarize UAV semantic segmentation, UAVid, canopy analysis, roadside vegetation monitoring, and RGB-only hazard screening.
 
-## Method
+# Method
 
-Describe the end-to-end workflow:
+Explain the pipeline:
 
-```text
-input image
--> tree or vegetation detection
--> road region estimation
--> feature extraction
--> risk scoring
--> CSV and visualization export
-```
+1. UAV RGB image input
+2. UAVid label loading when available
+3. SegFormer/SAM fallback when labels are unavailable
+4. road, tree, and low vegetation mask extraction
+5. connected component analysis on tree masks
+6. roadside canopy filtering
+7. canopy feature extraction
+8. preliminary risk ranking
+9. CSV and visualization export
 
-Explain the design priorities: reproducibility, modularity, explainability, fallback behavior, and clear failure analysis.
+# Dataset
 
-## Dataset
+Describe UAVid and any custom UAV roadside imagery. Note that UAVid includes Road, Tree, Low vegetation, Building, cars, Human, and Background clutter classes.
 
-Describe the image source used for evaluation. Include:
+# Semantic Segmentation And UAVid Labels
 
-- Dataset name or custom image source
-- Number of images
-- Image resolution range
-- Road scene type
-- Lighting and weather conditions
-- Known biases or missing conditions
+Explain how UAVid labels are converted to semantic masks and why labels are preferred for controlled testing. Describe the SegFormer/SAM fallback separately.
 
-Candidate public datasets:
+# Candidate Extraction
 
-- Mapillary Vistas
-- Cityscapes
-- BDD100K
+Describe connected component extraction on the Tree mask and filtering by area, width, height, and road proximity.
 
-## Detection Pipeline
+# Canopy Feature Extraction
 
-Describe the preferred detector and fallback detector.
+List and explain:
 
-The preferred approach uses a pretrained Ultralytics YOLO segmentation model when inference is available. The fallback approach uses HSV green thresholding, morphological filtering, and connected components. The fallback confidence is fixed at `0.5` to reflect uncertainty.
+- canopy area
+- canopy width and height
+- canopy aspect ratio
+- canopy compactness
+- canopy circularity
+- canopy centroid
+- distance to road
+- road overlap
+- road-buffer overlap
+- normalized canopy size
+- nearby tree density
+- low vegetation context
+- canopy asymmetry proxy
+- segmentation confidence and uncertainty
 
-Discuss why this two-stage approach is appropriate for a preliminary feasibility pipeline: it avoids custom training while keeping the system operational when pretrained detections are incomplete or unavailable.
+# Road Context Analysis
 
-## Road Region Estimation
+Explain use of the Road mask, road dilation buffer, distance transform, and nearest-road visualization line.
 
-Document the road-region strategy:
+# Risk Scoring
 
-1. Use road labels when segmentation annotations are available.
-2. Use a manually supplied polygon when image geometry requires it.
-3. Otherwise, approximate the road with a bottom-image polygon.
-
-State which option was used in the submitted results.
-
-## Feature Extraction
-
-For each detected component, report the extracted features:
-
-- Bounding box coordinates
-- Detection confidence
-- Tree or vegetation mask area
-- Bounding box height
-- Canopy width
-- Distance to estimated road region
-- Lean displacement
-- Lean direction relative to the road
-- Overhang ratio
-- Normalized image-space size
-- Uncertainty
-
-Explain lean estimation: upper mask pixels are compared with lower mask pixels to estimate horizontal displacement. The displacement is interpreted relative to the road centroid to determine whether the candidate is leaning toward the road.
-
-## Risk Scoring
-
-Document the scoring equation. State that each term is normalized or bounded to `[0, 1]` before aggregation:
+Describe the weighted score:
 
 ```text
 risk_score =
 0.35 * inverse_distance_to_road
-+ 0.25 * lean_toward_road
-+ 0.25 * overhang_ratio
-+ 0.10 * normalized_tree_size
++ 0.25 * road_buffer_overlap_ratio
++ 0.15 * normalized_canopy_size
++ 0.10 * nearby_tree_density
++ 0.10 * canopy_asymmetry_score
 + 0.05 * uncertainty
 ```
 
-Distance proximity:
+State that it is a preliminary image-space ranking score, not a hazard probability.
 
-```text
-inverse_distance_to_road = exp(-distance_to_road_px / distance_scale_px)
-```
+# Visualization
 
-Explain why this is mathematically reasonable: the function is monotonic, bounded, equals `1.0` at zero distance, and decays smoothly as the detected vegetation is farther from the road.
+Describe road overlays, tree overlays, low vegetation overlays, accepted and rejected canopy components, bounding boxes, risk labels, canopy area, road distance, and distance lines.
 
-Risk levels:
+# Results
 
-- Low: `risk_score < 0.33`
-- Medium: `0.33 <= risk_score < 0.66`
-- High: `risk_score >= 0.66`
+Include representative CSV rows, visualizations, and qualitative observations.
 
-Explain that the score is intended for prioritization and review, not for definitive structural-risk determination.
+# Failure Cases
 
-## Mathematical Reliability
+Discuss merged canopies, occlusion, shadows, inaccurate labels, poor model fallback segmentation, road segmentation errors, and scale changes across UAV altitude.
 
-Explain the reliability safeguards:
+# Limitations
 
-- Bounded feature terms prevent unbounded raw pixel values from dominating.
-- The weighted score is constrained to `[0, 1]`.
-- Distance risk is monotonic with proximity to the road.
-- Overhang is measured as an overlap ratio rather than an absolute pixel count.
-- Size is normalized by image area.
-- Detector uncertainty is represented as `1 - confidence`.
-- Lean direction is treated as binary because monocular imagery cannot estimate reliable metric trunk angle without camera geometry or depth.
+State clearly:
 
-State that these choices make the system suitable for first-pass ranking, but not a validated physical model of tree failure.
-
-## Visualization
-
-Describe the visual outputs:
-
-- Estimated road mask or polygon
-- Tree or vegetation mask overlay
-- Bounding box
-- Lean arrow
-- Shortest distance line to road when available
-- Risk score and level
-
-Include representative examples in the final report and explain whether the visual evidence supports the CSV results.
-
-## Results
-
-Summarize:
-
-- Number of images processed
-- Number of vegetation components detected
-- Distribution of Low, Medium, and High risk levels
-- Examples of plausible detections
-- Examples requiring manual review
-
-Reference `outputs/csv/tree_features.csv` and selected files from `outputs/visualizations/`.
-
-## Failure Cases
-
-Discuss observed or expected failures, including:
-
-- Missed trees
-- False vegetation detections
-- Grass or shrubs detected as tree candidates
-- Shadows or lighting artifacts
-- Occlusion by vehicles or buildings
-- Incorrect road approximation
-- Difficult viewpoints where the road is not in the lower image region
-
-Where possible, include example images or visualization outputs.
-
-## Assumptions
-
-List the operating assumptions:
-
-- Road location can be approximated from image geometry when labels are unavailable.
-- Vegetation masks can serve as candidate tree regions.
-- Pixel distances can support relative ranking within an image set.
-- Detection confidence can be used as an uncertainty proxy.
-- The fallback detector is acceptable for feasibility testing but not final deployment.
-
-## Limitations
-
-Explicit limitations:
-
-- Image-space approximation only
-- No true depth estimation
-- No metric tree height
-- Perspective distortion
-- Occlusion
-- Segmentation uncertainty
-- Shadows and lighting sensitivity
+"Because the system uses a single RGB UAV image, extracted features are image-space proxies. True tree height, trunk diameter, lean angle, and physical distance cannot be estimated reliably without camera calibration, multi-view reconstruction, or UAV LiDAR."
 
 Additional limitations:
 
-- No field validation labels are included by default.
-- Tree species, health, trunk defects, and branch condition are not assessed.
-- Risk scores are heuristic and require calibration before operational use.
+- no true 3D geometry
+- no metric tree height
+- no physical clearance estimate
+- no reliable trunk location
+- canopy asymmetry is not tree lean
+- UAVid semantic labels are not individual tree ground truth
+- overlapping canopies may still merge
 
-## Future Work
+# Future Work
 
-Recommended next steps:
+Discuss instance segmentation, UAV-specific model training, camera calibration, temporal monitoring, better uncertainty estimation, and validation against field observations.
 
-- Incorporate dataset-specific semantic labels for road and vegetation classes.
-- Train or fine-tune a model for roadside trees, trunks, branches, shrubs, and road boundaries.
-- Add camera calibration or depth estimation.
-- Validate scoring against expert inspection labels.
-- Add human-in-the-loop review for uncertain cases.
-- Develop separate scoring for canopy overhang, trunk lean, and proximity to road assets.
+# UAV LiDAR Extension
 
-## How UAV LiDAR Could Improve the System
-
-Explain that UAV LiDAR could provide true 3D geometry rather than image-space approximations. It could improve:
-
-- Accurate tree height
-- Trunk orientation
-- Canopy volume
-- Real-world distance estimation
-- Structural analysis
-- Occlusion robustness
-
-LiDAR could also support metric thresholds, detect overhanging branches in 3D, and distinguish foreground trees from background vegetation more reliably than monocular imagery alone.
+Explain how UAV LiDAR or multi-view reconstruction could add metric canopy height, tree height, 3D clearance, canopy volume, ground elevation, and reliable lean/structure measurements.

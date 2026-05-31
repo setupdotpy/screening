@@ -1,4 +1,4 @@
-"""Semantic segmentation with SegFormer and HSV fallback."""
+"""Semantic segmentation with SegFormer."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from config import SegmentationConfig
+from utils import clean_binary_mask, clamp01
 
 
 CITYSCAPES_LABELS = (
@@ -33,6 +34,15 @@ CITYSCAPES_LABELS = (
     "train",
     "motorcycle",
     "bicycle",
+)
+
+UAV_CANOPY_LABELS = (
+    "tree",
+    "low vegetation",
+    "background clutter",
+    "static car",
+    "moving car",
+    "human",
 )
 
 
@@ -66,22 +76,21 @@ class SegFormerSegmenter:
             self.model = SegformerForSemanticSegmentation.from_pretrained(self.config.model_name)
             self.model.to(self.device)
             self.model.eval()
-        except Exception as exc:  # noqa: BLE001 - fallback is required for portability.
+        except Exception as exc:  # noqa: BLE001 - report model load failure clearly.
             self.processor = None
             self.model = None
             self.model_error = str(exc)
 
     def segment(self, image_bgr: np.ndarray) -> SegmentationResult:
-        start = time.perf_counter()
         if self.processor is None or self.model is None:
-            warning = f"SegFormer unavailable; using HSV fallback. Reason: {self.model_error}"
-            return self._fallback(image_bgr, start, warning)
+            reason = self.model_error or "SegFormer model failed to load."
+            raise RuntimeError(f"SegFormer unavailable: {reason}")
 
+        start = time.perf_counter()
         try:
             return self._segment_with_model(image_bgr, start)
-        except Exception as exc:  # noqa: BLE001 - continue with required fallback.
-            warning = f"SegFormer inference failed; using HSV fallback. Reason: {exc}"
-            return self._fallback(image_bgr, start, warning)
+        except Exception as exc:  # noqa: BLE001 - this is a hard failure by design.
+            raise RuntimeError(f"SegFormer inference failed: {exc}") from exc
 
     def _segment_with_model(self, image_bgr: np.ndarray, start: float) -> SegmentationResult:
         import torch
@@ -95,7 +104,8 @@ class SegFormerSegmenter:
 
         inputs = self.processor(images=pil_image, return_tensors="pt")
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
-        with torch.no_grad():
+
+        with torch.inference_mode():
             outputs = self.model(**inputs)
             logits = functional.interpolate(
                 outputs.logits,
@@ -112,23 +122,13 @@ class SegFormerSegmenter:
             label_map = cv2.resize(label_map, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
             confidence_map = cv2.resize(confidence_map, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
 
-        class_masks = labels_to_class_masks(label_map, self._id_to_label(), image_bgr.shape[:2])
-        return SegmentationResult(class_masks, confidence_map, "segformer", time.perf_counter() - start)
-
-    def _fallback(self, image_bgr: np.ndarray, start: float, warning: str) -> SegmentationResult:
-        print(f"WARNING: {warning}")
-        hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-        lower_green = np.array([25, 35, 30], dtype=np.uint8)
-        upper_green = np.array([95, 255, 255], dtype=np.uint8)
-        vegetation = cv2.inRange(hsv, lower_green, upper_green)
-        confidence = np.full(image_bgr.shape[:2], self.config.fallback_confidence, dtype=np.float32)
-        class_masks = {
-            "vegetation": vegetation,
-            "terrain": np.zeros(image_bgr.shape[:2], dtype=np.uint8),
-            "road": np.zeros(image_bgr.shape[:2], dtype=np.uint8),
-            "sidewalk": np.zeros(image_bgr.shape[:2], dtype=np.uint8),
-        }
-        return SegmentationResult(class_masks, confidence, "hsv_fallback", time.perf_counter() - start, warning)
+        class_masks = labels_to_class_masks(label_map, self._id_to_label(), (original_h, original_w))
+        return SegmentationResult(
+            class_masks=class_masks,
+            confidence_map=confidence_map,
+            source="segformer",
+            elapsed_seconds=time.perf_counter() - start,
+        )
 
     def _id_to_label(self) -> dict[int, str]:
         id_to_label = getattr(self.model.config, "id2label", None) or {}
@@ -141,11 +141,13 @@ class SegFormerSegmenter:
 
 
 def labels_to_class_masks(label_map: np.ndarray, id_to_label: dict[int, str], shape: tuple[int, int]) -> Dict[str, np.ndarray]:
-    masks = {label: np.zeros(shape, dtype=np.uint8) for label in CITYSCAPES_LABELS}
+    masks = {label: np.zeros(shape, dtype=np.uint8) for label in CITYSCAPES_LABELS + UAV_CANOPY_LABELS}
     for class_id, label in id_to_label.items():
         if label not in masks:
             continue
         masks[label][label_map == class_id] = 255
+    masks["tree"] = cv2.bitwise_or(masks["tree"], masks["vegetation"])
+    masks["low vegetation"] = cv2.bitwise_or(masks["low vegetation"], masks["terrain"])
     return masks
 
 
@@ -162,11 +164,37 @@ def resize_for_inference(image_bgr: np.ndarray, max_size: int) -> np.ndarray:
 
 
 def normalize_label(label: str) -> str:
-    label = label.lower().replace("_", " ").replace("-", " ").strip()
+    normalized = label.lower().replace("_", " ").replace("-", " ").strip()
     aliases = {
         "trafficlight": "traffic light",
         "traffic light": "traffic light",
         "trafficsign": "traffic sign",
         "traffic sign": "traffic sign",
+        "low vegetation": "low vegetation",
+        "lowvegetation": "low vegetation",
+        "static car": "static car",
+        "staticcar": "static car",
+        "moving car": "moving car",
+        "movingcar": "moving car",
+        "background clutter": "background clutter",
+        "backgroundclutter": "background clutter",
     }
-    return aliases.get(label, label)
+    return aliases.get(normalized, normalized)
+
+
+def mask_for_labels(class_masks: Dict[str, np.ndarray], labels: tuple[str, ...]) -> np.ndarray:
+    if not labels:
+        shape = next(iter(class_masks.values())).shape
+        return np.zeros(shape, dtype=np.uint8)
+    combined = np.zeros(next(iter(class_masks.values())).shape, dtype=np.uint8)
+    for label in labels:
+        if label in class_masks:
+            combined = cv2.bitwise_or(combined, class_masks[label])
+    return combined
+
+
+def mean_confidence(confidence_map: np.ndarray, mask: np.ndarray) -> float:
+    pixels = confidence_map[mask > 0]
+    if pixels.size == 0:
+        return 0.0
+    return clamp01(float(np.mean(pixels)))
