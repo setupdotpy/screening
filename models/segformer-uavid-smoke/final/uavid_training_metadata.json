@@ -1,0 +1,22 @@
+{
+  "base_model": "nvidia/mit-b0",
+  "image_size": 256,
+  "classes": [
+    "background clutter",
+    "building",
+    "road",
+    "tree",
+    "low vegetation",
+    "static car",
+    "moving car",
+    "human"
+  ],
+  "metrics": {
+    "val_loss": 2.061888098716736,
+    "pixel_accuracy": 0.21923065185546875,
+    "mean_iou": 0.06151436149844178,
+    "road_iou": 0.02529488859764089,
+    "tree_iou": 0.005675042151581198,
+    "low_vegetation_iou": 0.05506890913338005
+  }
+}

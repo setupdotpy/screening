@@ -1,4 +1,4 @@
-"""Visualization and mask export for UAV canopy risk screening."""
+"""Visualization and mask export for UAV canopy inspection-priority screening."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from segformer_segmenter import SegmentationResult
 from structural_filter import TreeCandidate
 
 
-RISK_COLORS = {
+PRIORITY_COLORS = {
     "Low": (60, 180, 75),
     "Medium": (0, 165, 255),
     "High": (40, 40, 220),
@@ -24,7 +24,8 @@ REJECTED_COLOR = (170, 170, 170)
 ROAD_COLOR = (255, 90, 20)
 TREE_COLOR = (0, 175, 0)
 LOW_VEGETATION_COLOR = (130, 220, 110)
-TITLE = "UAV Roadside Tree/Canopy Risk Screening"
+PRIORITY_COLOR = (255, 255, 255)
+TITLE = "UAV Roadside Canopy Inspection Priority Screening"
 
 
 def save_visualization(
@@ -59,7 +60,7 @@ def save_visualization(
 
     for candidate, feature in zip(accepted_candidates, feature_results):
         row = feature.row
-        color = RISK_COLORS.get(str(row.get("risk_level", "Low")), (255, 255, 255))
+        color = PRIORITY_COLORS.get(str(row.get("inspection_priority_level", "Low")), (255, 255, 255))
         vis = overlay_mask(vis, candidate.mask, color, 0.34)
         x1, y1, x2, y2 = candidate.bbox
         cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
@@ -68,12 +69,14 @@ def save_visualization(
         if feature.distance_line:
             cv2.line(vis, feature.distance_line[0], feature.distance_line[1], (255, 0, 255), 2)
         label = (
-            f"T{row['tree_id']} R{row['risk_score']:.2f} {row['risk_level']} "
-            f"A{row['canopy_area_px']} D{row['distance_to_road_px']:.0f}"
+            f"T{row['tree_id']} P={row['inspection_priority_score']:.2f} {row['inspection_priority_level']} "
+            f"A={row['canopy_area_px']} I={row['canopy_irregularity']:.2f} D={row['distance_to_road_px']:.0f}"
         )
         draw_label(vis, label, (x1, max(y1 - 8, 18)), color)
 
-    output_path = output_dir / "visualizations" / f"{Path(image_name).stem}_risk.jpg"
+    draw_legend(vis)
+
+    output_path = output_dir / "visualizations" / f"{Path(image_name).stem}_priority.jpg"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(output_path), vis)
 
@@ -120,3 +123,26 @@ def draw_banner(image: np.ndarray, title: str, subtitle: str) -> None:
     cv2.rectangle(image, (x1, y1), (x1 + width, y1 + height), (20, 20, 20), -1)
     cv2.putText(image, title, (x1 + 8, y1 + title_h + 7), font, title_scale, (255, 255, 255), title_thickness, cv2.LINE_AA)
     cv2.putText(image, subtitle, (x1 + 8, y1 + title_h + sub_h + 17), font, sub_scale, (220, 220, 220), sub_thickness, cv2.LINE_AA)
+
+
+def draw_legend(image: np.ndarray) -> None:
+    items = (
+        ("Road mask", ROAD_COLOR),
+        ("Tree/canopy mask", TREE_COLOR),
+        ("Low vegetation mask", LOW_VEGETATION_COLOR),
+        ("Inspection-priority candidates", PRIORITY_COLOR),
+    )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.5
+    thickness = 1
+    line_height = 22
+    max_text_width = max(cv2.getTextSize(text, font, scale, thickness)[0][0] for text, _ in items)
+    box_w = max_text_width + 48
+    box_h = line_height * len(items) + 14
+    x1 = 12
+    y1 = image.shape[0] - box_h - 12
+    cv2.rectangle(image, (x1, y1), (x1 + box_w, y1 + box_h), (20, 20, 20), -1)
+    for index, (text, color) in enumerate(items):
+        y = y1 + 18 + index * line_height
+        cv2.rectangle(image, (x1 + 8, y - 10), (x1 + 26, y + 4), color, -1)
+        cv2.putText(image, text, (x1 + 34, y + 2), font, scale, (255, 255, 255), thickness, cv2.LINE_AA)

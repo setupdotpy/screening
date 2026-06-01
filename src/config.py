@@ -36,6 +36,9 @@ MIN_CANOPY_HEIGHT_PX = 10
 MAX_TREE_DISTANCE_TO_ROAD_PX = 250
 NEARBY_TREE_RADIUS_PX = 150
 LABEL_COLOR_TOLERANCE = 5
+EDGE_ROUGHNESS_MIN = 3.0
+EDGE_ROUGHNESS_MAX = 15.0
+USE_INSPECTION_PRIORITY_TERMINOLOGY = True
 
 
 @dataclass(frozen=True)
@@ -94,7 +97,10 @@ class RiskConfig:
     road_buffer_radius_px: int = ROAD_BUFFER_RADIUS
     nearby_tree_radius_px: int = NEARBY_TREE_RADIUS_PX
     low_vegetation_buffer_radius_px: int = NEARBY_TREE_RADIUS_PX
-    weights: Tuple[float, float, float, float, float, float] = (0.35, 0.25, 0.15, 0.10, 0.10, 0.05)
+    edge_roughness_min: float = EDGE_ROUGHNESS_MIN
+    edge_roughness_max: float = EDGE_ROUGHNESS_MAX
+    use_inspection_priority_terminology: bool = USE_INSPECTION_PRIORITY_TERMINOLOGY
+    weights: Tuple[float, float, float, float, float, float] = (0.30, 0.20, 0.15, 0.15, 0.10, 0.10)
 
 
 @dataclass(frozen=True)
@@ -153,23 +159,23 @@ CSV_FIELDS = [
     "canopy_area_px",
     "canopy_width_px",
     "canopy_height_px",
-    "canopy_aspect_ratio",
+    "canopy_diameter_px",
     "canopy_compactness",
     "canopy_circularity",
-    "canopy_centroid_x",
-    "canopy_centroid_y",
+    "canopy_asymmetry_score",
+    "canopy_gap_ratio",
+    "canopy_edge_roughness",
+    "canopy_irregularity",
+    "rgb_green_ratio",
+    "rgb_brightness_mean",
+    "rgb_brightness_std",
     "distance_to_road_px",
     "inverse_distance_to_road",
     "road_overlap_ratio",
     "road_buffer_overlap_ratio",
     "normalized_canopy_size",
-    "nearby_tree_density",
-    "low_vegetation_context_ratio",
-    "canopy_asymmetry_score",
-    "segmentation_confidence",
-    "uncertainty",
-    "risk_score",
-    "risk_level",
+    "inspection_priority_score",
+    "inspection_priority_level",
     "candidate_source",
 ]
 

@@ -1,0 +1,22 @@
+{
+  "base_model": "nvidia/segformer-b0-finetuned-ade-512-512",
+  "image_size": 512,
+  "classes": [
+    "background clutter",
+    "building",
+    "road",
+    "tree",
+    "low vegetation",
+    "static car",
+    "moving car",
+    "human"
+  ],
+  "metrics": {
+    "val_loss": 0.530607895553112,
+    "pixel_accuracy": 0.802916009085519,
+    "mean_iou": 0.40625749846634085,
+    "road_iou": 0.6271266139911351,
+    "tree_iou": 0.6815037584724872,
+    "low_vegetation_iou": 0.576997525362653
+  }
+}

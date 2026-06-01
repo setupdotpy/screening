@@ -1,0 +1,22 @@
+{
+  "base_model": "models/segformer-uavid/best",
+  "image_size": 512,
+  "classes": [
+    "background clutter",
+    "building",
+    "road",
+    "tree",
+    "low vegetation",
+    "static car",
+    "moving car",
+    "human"
+  ],
+  "metrics": {
+    "val_loss": 0.4781842018876757,
+    "pixel_accuracy": 0.8274607522147043,
+    "mean_iou": 0.5070813887295746,
+    "road_iou": 0.6796658593469681,
+    "tree_iou": 0.7116733579891945,
+    "low_vegetation_iou": 0.6037269390711882
+  }
+}

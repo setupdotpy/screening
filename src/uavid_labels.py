@@ -32,6 +32,8 @@ UAVID_CLASSES: tuple[UAVidClass, ...] = (
 
 UAVID_CLASS_NAMES = tuple(item.name for item in UAVID_CLASSES)
 UAVID_COLOR_MAP: dict[str, tuple[int, int, int]] = {item.name: item.color_rgb for item in UAVID_CLASSES}
+UAVID_ID_TO_LABEL: dict[int, str] = {item.label_id: item.name for item in UAVID_CLASSES}
+UAVID_LABEL_TO_ID: dict[str, int] = {item.name: item.label_id for item in UAVID_CLASSES}
 
 
 def load_uavid_segmentation(
@@ -103,6 +105,36 @@ def uavid_label_to_masks(
             for name, mask in masks.items()
         }
     return masks
+
+
+def uavid_label_to_class_ids(
+    label_image: np.ndarray,
+    target_shape: tuple[int, int] | None = None,
+    tolerance: int = 5,
+    ignore_index: int = 255,
+) -> np.ndarray:
+    """Convert a UAVid RGB or ID label image to integer class IDs."""
+    if label_image.ndim == 2:
+        class_ids = label_image.astype(np.int64)
+    else:
+        if label_image.shape[2] == 4:
+            label_image = label_image[:, :, :3]
+        label_rgb = cv2.cvtColor(label_image, cv2.COLOR_BGR2RGB)
+        class_ids = np.full(label_rgb.shape[:2], int(ignore_index), dtype=np.int64)
+        label_int = label_rgb.astype(np.int16)
+        tolerance = max(int(tolerance), 0)
+        for item in UAVID_CLASSES:
+            color = np.array(item.color_rgb, dtype=np.int16)
+            distance = np.max(np.abs(label_int - color), axis=2)
+            class_ids[distance <= tolerance] = int(item.label_id)
+
+    if target_shape is not None and class_ids.shape != target_shape:
+        class_ids = cv2.resize(
+            class_ids.astype(np.uint8),
+            (target_shape[1], target_shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        ).astype(np.int64)
+    return class_ids
 
 
 def _rgb_label_to_masks(label_rgb: np.ndarray, tolerance: int) -> Dict[str, np.ndarray]:

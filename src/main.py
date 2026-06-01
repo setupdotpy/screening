@@ -1,4 +1,4 @@
-"""Command-line entry point for roadside tree risk screening."""
+"""Command-line entry point for UAV roadside canopy inspection-priority screening."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import List
 from config import CSV_FIELDS, PipelineConfig, RoadConfig, SamConfig, SegmentationConfig, ensure_output_dirs
 from candidate_extraction import build_connected_component_candidates, normalize_candidate_masks
 from feature_extraction import extract_features
-from risk_scoring import score_risk
+from risk_scoring import score_inspection_priority
 from road_region import extract_road_context
 from segformer_segmenter import SegFormerSegmenter, mean_confidence
 from structural_filter import apply_structural_filter, distance_buffer_from_map, distance_map_to_mask
@@ -39,6 +39,11 @@ def parse_args() -> argparse.Namespace:
         default=1024,
         help="Maximum SegFormer inference dimension in pixels.",
     )
+    parser.add_argument(
+        "--segformer_model",
+        default=None,
+        help="Optional SegFormer checkpoint path/name for model fallback prediction.",
+    )
     return parser.parse_args()
 
 
@@ -58,8 +63,17 @@ def parse_polygon(value: str | None) -> list[tuple[int, int]] | None:
     return polygon
 
 
-def build_config(inference_size: int, road_polygon: str | None, use_uavid_labels: bool = False) -> PipelineConfig:
-    segmentation = replace(SegmentationConfig(), inference_max_size=max(1, int(inference_size)))
+def build_config(
+    inference_size: int,
+    road_polygon: str | None,
+    use_uavid_labels: bool = False,
+    segformer_model: str | None = None,
+) -> PipelineConfig:
+    segmentation = replace(
+        SegmentationConfig(),
+        inference_max_size=max(1, int(inference_size)),
+        model_name=segformer_model or SegmentationConfig().model_name,
+    )
     road = RoadConfig(manual_polygon=parse_polygon(road_polygon))
     return PipelineConfig(segmentation=segmentation, road=road, sam=SamConfig(), use_uavid_labels=use_uavid_labels)
 
@@ -72,8 +86,14 @@ def run_pipeline(
     max_images: int | None = None,
     inference_size: int = 1024,
     use_uavid_labels: bool = False,
+    segformer_model: str | None = None,
 ) -> List[dict]:
-    config = build_config(inference_size=inference_size, road_polygon=road_polygon, use_uavid_labels=use_uavid_labels)
+    config = build_config(
+        inference_size=inference_size,
+        road_polygon=road_polygon,
+        use_uavid_labels=use_uavid_labels,
+        segformer_model=segformer_model,
+    )
 
     ensure_output_dirs(output_dir)
     segmenter = None if use_uavid_labels else SegFormerSegmenter(config.segmentation)
@@ -177,8 +197,9 @@ def run_pipeline(
                     road_distance_map=road_distance_map,
                     road_buffer_mask=road_buffer_mask,
                     road_edge_pixels=road_edge_pixels,
+                    image_bgr=image,
                 )
-                scored_row = score_risk(feature_result.row, config.risk)
+                scored_row = score_inspection_priority(feature_result.row, config.risk)
                 rows.append(scored_row)
                 image_rows.append(scored_row)
                 feature_results.append(feature_result)
@@ -205,8 +226,8 @@ def run_pipeline(
                 output_dir=output_dir,
             )
 
-            average_risk = (
-                sum(float(row["risk_score"]) for row in image_rows) / len(image_rows)
+            average_priority = (
+                sum(float(row["inspection_priority_score"]) for row in image_rows) / len(image_rows)
                 if image_rows
                 else 0.0
             )
@@ -219,7 +240,7 @@ def run_pipeline(
                 f"post_split_candidates={int(split_stats.get('post_split_candidates', 0))} | "
                 f"connected_components={int(split_stats.get('connected_components_count', 0))} | "
                 f"accepted_canopies={len(accepted_candidates)} | "
-                f"avg_risk={average_risk:.3f}"
+                f"avg_priority={average_priority:.3f}"
             )
         except Exception as exc:  # noqa: BLE001 - keep pipeline moving.
             print(f"WARNING: failed on {image_path.name}: {exc}")
@@ -240,6 +261,7 @@ def main() -> None:
         max_images=args.max_images,
         inference_size=args.inference_size,
         use_uavid_labels=args.use_uavid_labels,
+        segformer_model=args.segformer_model,
     )
 
 

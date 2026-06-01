@@ -1,12 +1,12 @@
-# UAV Roadside Tree/Canopy Risk Screening from RGB Images
+# UAV Roadside Canopy Inspection Priority Screening
 
 ## Overview
 
-This project is a preliminary UAV-based roadside tree and canopy screening pipeline. It targets UAVid-style oblique aerial imagery with roads, roadside trees, low vegetation, buildings, cars, humans, and background clutter.
+This project performs preliminary inspection-priority screening for roadside tree/canopy regions in UAV RGB imagery. It targets UAVid-style oblique aerial scenes containing roads, roadside trees, low vegetation, buildings, vehicles, humans, and background clutter.
 
-The pipeline uses UAVid semantic labels directly when available. If labels are not available, it falls back to the existing SegFormer/SAM segmentation path. The output is an explainable image-space risk ranking, not a real hazard probability estimate.
+The proposed score should not be interpreted as a direct estimate of tree failure probability. It is a preliminary image-based ranking score for selecting roadside canopy regions that may require further inspection.
 
-Because the system uses a single RGB UAV image, extracted features are image-space proxies. True tree height, trunk diameter, lean angle, and physical distance cannot be estimated reliably without camera calibration, multi-view reconstruction, or UAV LiDAR.
+The pipeline uses UAVid semantic labels directly when available. If labels are not available, it falls back to the existing SegFormer/SAM segmentation path.
 
 ## Setup
 
@@ -18,7 +18,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-If using the project conda environment:
+With the project conda environment:
 
 ```bash
 cd ~/screening/roadside_tree_risk
@@ -33,7 +33,7 @@ Place UAV RGB images in:
 data/images/
 ```
 
-If UAVid label masks are available, place matching labels in:
+Place matching UAVid label masks in:
 
 ```text
 data/labels/
@@ -43,7 +43,7 @@ The label loader matches files by image stem and supports common suffixes such a
 
 ## Running
 
-Use UAVid labels when available:
+Use UAVid labels:
 
 ```bash
 python src/main.py \
@@ -53,101 +53,120 @@ python src/main.py \
   --use_uavid_labels
 ```
 
-Run model fallback without labels:
+Use model fallback:
 
 ```bash
 python src/main.py --image_dir data/images --output_dir outputs
 ```
 
-Optional:
+## Fine-Tuning SegFormer On UAVid
 
-```bash
-python src/main.py --image_dir data/images --output_dir outputs --max_images 25
-python src/main.py --image_dir data/images --output_dir outputs --inference_size 1024
+This project includes a lightweight fine-tuning script for the labeled UAVid split:
+
+```text
+data/archive/uavid_train/seq1  images=600 labels=600
+data/archive/uavid_val/seq16   images=70  labels=70
 ```
 
-## UAVid Classes
+The local GPU is suitable for SegFormer-B0 with conservative settings: `512` image size, batch size `1`, gradient accumulation, and CUDA mixed precision.
 
-The UAVid label path supports:
+Smoke test:
 
-- Building
-- Road
-- Static car
-- Tree
-- Low vegetation
-- Human
-- Moving car
-- Background clutter
+```bash
+conda run -n screening python -u src/train_segformer_uavid.py \
+  --train_dir data/archive/uavid_train \
+  --val_dir data/archive/uavid_val \
+  --output_dir models/segformer-uavid-smoke \
+  --image_size 256 \
+  --epochs 1 \
+  --batch_size 1 \
+  --gradient_accumulation_steps 1 \
+  --max_train_samples 2 \
+  --max_val_samples 2 \
+  --num_workers 0 \
+  --eval_every_steps 0
+```
 
-Labels are converted to semantic masks with a configurable color tolerance. The default tolerance is `5`.
+Recommended full fine-tuning command for this machine:
+
+```bash
+conda run -n screening python -u src/train_segformer_uavid.py \
+  --train_dir data/archive/uavid_train \
+  --val_dir data/archive/uavid_val \
+  --output_dir models/segformer-uavid \
+  --model_name nvidia/segformer-b0-finetuned-ade-512-512 \
+  --image_size 512 \
+  --epochs 8 \
+  --batch_size 1 \
+  --gradient_accumulation_steps 4 \
+  --learning_rate 6e-5 \
+  --num_workers 2 \
+  --eval_every_steps 100
+```
+
+Run prediction with the fine-tuned checkpoint:
+
+```bash
+python src/main.py \
+  --image_dir data/uavid_test_one_per_seq \
+  --output_dir outputs_finetuned_uavid \
+  --segformer_model models/segformer-uavid/best \
+  --inference_size 768
+```
 
 ## Pipeline
 
 ```text
-Input UAV RGB image
--> UAVid semantic label loading or SegFormer/SAM fallback
--> road mask
--> tree mask
--> low vegetation mask
+Input UAV image
+-> load UAVid label or predicted segmentation
+-> extract road mask
+-> extract tree mask
+-> extract low vegetation mask
 -> connected components on tree mask
--> roadside canopy filtering
--> canopy feature extraction
--> preliminary risk score
--> CSV and visualization export
+-> filter tree/canopy candidates
+-> compute road-context features
+-> compute canopy-structure features
+-> compute inspection_priority_score
+-> save CSV and visualization
 ```
 
-## Why UAVid
+## Canopy Indicators
 
-UAVid contains UAV oblique imagery and semantic classes that are directly useful for roadside canopy analysis: `Road`, `Tree`, and `Low vegetation`. This is a better target than Cityscapes for UAV roadside imagery because Cityscapes is street-view and does not provide the same aerial viewpoint.
+The system uses image-space canopy proxies, including:
 
-## Why Canopy-Level Features
-
-Street-view assumptions such as trunk evidence and lean angle are not reliable in UAV imagery. Tree trunks are often hidden by canopy, camera angle, and occlusion. This pipeline therefore uses canopy-level image features:
-
-- canopy area
-- canopy width and height
+- canopy area, width, height, and diameter
 - canopy compactness
 - canopy circularity
-- distance to road
-- overlap with road and road buffer
-- nearby tree density
-- low vegetation context
 - canopy asymmetry
+- canopy gap ratio
+- canopy edge roughness
+- canopy irregularity
+- RGB green ratio
+- RGB brightness mean and standard deviation
+- distance to road
+- road and road-buffer overlap
 
-Canopy asymmetry is only a weak 2D proxy. It is not a true lean angle.
+Large, irregular, sparse, or asymmetric canopies near roads may deserve further inspection. These indicators do not prove structural instability.
 
-## Model Fallback
-
-When UAVid labels are not used or not found, the pipeline falls back to SegFormer plus SAM:
-
-- SegFormer provides semantic context.
-- SAM provides instance-like mask proposals.
-- SAM masks are clipped to the semantic vegetation/tree mask.
-- If SAM is unavailable or produces no usable masks, connected components are used.
-
-This fallback is useful for exploratory testing, but UAVid labels are preferred for controlled UAVid experiments.
-
-## Risk Score
-
-The score is a bounded weighted ranking:
+## Inspection Priority Score
 
 ```text
-risk_score =
-0.35 * inverse_distance_to_road
-+ 0.25 * road_buffer_overlap_ratio
+inspection_priority_score =
+0.30 * inverse_distance_to_road
++ 0.20 * road_buffer_overlap_ratio
 + 0.15 * normalized_canopy_size
-+ 0.10 * nearby_tree_density
++ 0.15 * canopy_irregularity
++ 0.10 * canopy_gap_ratio
 + 0.10 * canopy_asymmetry_score
-+ 0.05 * uncertainty
 ```
 
-Risk levels:
+Levels:
 
-- Low: `risk_score < 0.33`
-- Medium: `0.33 <= risk_score < 0.66`
-- High: `risk_score >= 0.66`
+- Low: `inspection_priority_score < 0.33`
+- Medium: `0.33 <= inspection_priority_score < 0.66`
+- High: `inspection_priority_score >= 0.66`
 
-This score is for preliminary prioritization only.
+This is a ranking score for inspection order, not a hazard probability.
 
 ## Outputs
 
@@ -160,7 +179,7 @@ outputs/csv/tree_features.csv
 Visualizations:
 
 ```text
-outputs/visualizations/*_risk.jpg
+outputs/visualizations/*_priority.jpg
 ```
 
 Canopy masks:
@@ -169,20 +188,19 @@ Canopy masks:
 outputs/masks/*_canopy_*.png
 ```
 
-Visualizations draw road masks in blue, tree masks in green, low vegetation in light green, canopy boxes, rejected components, distance lines, risk labels, canopy area, and road distance.
+Visualizations show road masks, tree/canopy masks, low vegetation masks, inspection-priority candidates, bounding boxes, priority labels, canopy area, canopy irregularity, and distance lines.
 
-## Limitations
+## Limits Of RGB-Only UAV Imagery
 
-- Single RGB UAV image only
-- No true 3D geometry
-- No metric tree height
-- No real depth
-- No true trunk diameter
-- No reliable lean angle
-- No physical clearance measurement
-- Perspective distortion
-- Occlusion and overlapping canopies
-- UAVid labels provide semantic classes, not guaranteed individual tree instances
-- SAM is not tree-specific when fallback mode is used
+Single UAV RGB images cannot determine:
 
-LiDAR or multi-view reconstruction would be needed for true tree height, lean angle, trunk geometry, canopy volume, and 3D road clearance.
+- tree lean angle
+- trunk decay
+- root damage
+- internal disease
+- true tree height
+- trunk diameter
+- physical road clearance
+- metric distance without calibration
+
+Canopy features are image-space proxies. UAV LiDAR, calibrated multi-view reconstruction, or field inspection is required for real hazard assessment.

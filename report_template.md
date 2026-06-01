@@ -1,10 +1,10 @@
 # Introduction
 
-Describe UAV roadside tree/canopy screening and why preliminary image-based prioritization is useful.
+Describe UAV roadside canopy inspection-priority screening and why a preliminary ranking can help select regions for field review.
 
 # Related Work
 
-Summarize UAV semantic segmentation, UAVid, canopy analysis, roadside vegetation monitoring, and RGB-only hazard screening.
+Summarize UAV semantic segmentation, UAVid, canopy analysis, roadside vegetation monitoring, and RGB-only screening.
 
 # Method
 
@@ -14,11 +14,12 @@ Explain the pipeline:
 2. UAVid label loading when available
 3. SegFormer/SAM fallback when labels are unavailable
 4. road, tree, and low vegetation mask extraction
-5. connected component analysis on tree masks
+5. connected components on tree masks
 6. roadside canopy filtering
-7. canopy feature extraction
-8. preliminary risk ranking
-9. CSV and visualization export
+7. road-context feature extraction
+8. canopy feature extraction
+9. inspection-priority scoring
+10. CSV and visualization export
 
 # Dataset
 
@@ -32,48 +33,53 @@ Explain how UAVid labels are converted to semantic masks and why labels are pref
 
 Describe connected component extraction on the Tree mask and filtering by area, width, height, and road proximity.
 
+# Road Context Analysis
+
+Explain use of the Road mask, road dilation buffer, distance transform, road overlap, and nearest-road visualization line.
+
 # Canopy Feature Extraction
 
 List and explain:
 
-- canopy area
-- canopy width and height
-- canopy aspect ratio
+- canopy area, width, height, and diameter
 - canopy compactness
 - canopy circularity
-- canopy centroid
-- distance to road
-- road overlap
-- road-buffer overlap
+- canopy asymmetry score
+- canopy gap ratio
+- canopy edge roughness
+- canopy irregularity
+- RGB green ratio
+- RGB brightness mean
+- RGB brightness standard deviation
 - normalized canopy size
-- nearby tree density
-- low vegetation context
-- canopy asymmetry proxy
-- segmentation confidence and uncertainty
 
-# Road Context Analysis
+# Interpretation Of Canopy Indicators
 
-Explain use of the Road mask, road dilation buffer, distance transform, and nearest-road visualization line.
+Explain that large, sparse, irregular, or asymmetric canopies near roads may deserve further inspection. State that these features are weak image-space proxies and cannot diagnose internal tree condition.
 
-# Risk Scoring
+# Inspection Priority Score
 
 Describe the weighted score:
 
 ```text
-risk_score =
-0.35 * inverse_distance_to_road
-+ 0.25 * road_buffer_overlap_ratio
+inspection_priority_score =
+0.30 * inverse_distance_to_road
++ 0.20 * road_buffer_overlap_ratio
 + 0.15 * normalized_canopy_size
-+ 0.10 * nearby_tree_density
++ 0.15 * canopy_irregularity
++ 0.10 * canopy_gap_ratio
 + 0.10 * canopy_asymmetry_score
-+ 0.05 * uncertainty
 ```
 
-State that it is a preliminary image-space ranking score, not a hazard probability.
+Explain Low, Medium, and High priority thresholds.
+
+# Why This Is Not True Hazard Prediction
+
+State that the output is not tree failure probability. It ranks roadside canopy regions for inspection using single-image RGB proxies.
 
 # Visualization
 
-Describe road overlays, tree overlays, low vegetation overlays, accepted and rejected canopy components, bounding boxes, risk labels, canopy area, road distance, and distance lines.
+Describe road overlays, tree/canopy overlays, low vegetation overlays, accepted and rejected components, bounding boxes, priority labels, canopy area, irregularity, road distance, and distance lines.
 
 # Results
 
@@ -81,9 +87,9 @@ Include representative CSV rows, visualizations, and qualitative observations.
 
 # Failure Cases
 
-Discuss merged canopies, occlusion, shadows, inaccurate labels, poor model fallback segmentation, road segmentation errors, and scale changes across UAV altitude.
+Discuss merged canopies, occlusion, shadows, inaccurate labels, poor fallback segmentation, road segmentation errors, and scale changes across UAV altitude.
 
-# Limitations
+# Limitations Of RGB-Only UAV Imagery
 
 State clearly:
 
@@ -95,14 +101,13 @@ Additional limitations:
 - no metric tree height
 - no physical clearance estimate
 - no reliable trunk location
+- no trunk decay detection
+- no root damage detection
+- no internal disease detection
 - canopy asymmetry is not tree lean
 - UAVid semantic labels are not individual tree ground truth
 - overlapping canopies may still merge
 
-# Future Work
+# Future Work With UAV LiDAR And Individual Tree Segmentation
 
-Discuss instance segmentation, UAV-specific model training, camera calibration, temporal monitoring, better uncertainty estimation, and validation against field observations.
-
-# UAV LiDAR Extension
-
-Explain how UAV LiDAR or multi-view reconstruction could add metric canopy height, tree height, 3D clearance, canopy volume, ground elevation, and reliable lean/structure measurements.
+Discuss UAV LiDAR, calibrated multi-view reconstruction, individual-tree instance segmentation, temporal monitoring, field validation, and better uncertainty estimation.
