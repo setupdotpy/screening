@@ -35,6 +35,9 @@ def extract_features(
     road_buffer_mask: np.ndarray | None = None,
     road_edge_pixels: np.ndarray | None = None,
     image_bgr: np.ndarray | None = None,
+    segmentation_entropy_map: np.ndarray | None = None,
+    tree_probability_map: np.ndarray | None = None,
+    uncertainty_source: str = "model_probabilities",
 ) -> FeatureResult:
     del all_candidates, low_vegetation_mask
     risk_config = risk_config or RiskConfig()
@@ -67,6 +70,9 @@ def extract_features(
         + 0.3 * canopy_gap_ratio
     )
     rgb_green_ratio, rgb_brightness_mean, rgb_brightness_std = compute_rgb_canopy_stats(image_bgr, mask)
+    segmentation_entropy_uncertainty = mean_map_value(segmentation_entropy_map, mask, default=0.0)
+    mean_tree_probability = mean_map_value(tree_probability_map, mask, default=1.0)
+    tree_probability_uncertainty = 1.0 - mean_tree_probability
     normalized_canopy_size = float(area) / max(image_area, 1.0)
 
     row = {
@@ -94,7 +100,11 @@ def extract_features(
         "road_overlap_ratio": safe_float(road_overlap_ratio),
         "road_buffer_overlap_ratio": safe_float(road_buffer_overlap_ratio),
         "normalized_canopy_size": safe_float(normalized_canopy_size),
+        "segmentation_entropy_uncertainty": safe_float(segmentation_entropy_uncertainty),
+        "mean_tree_probability": safe_float(mean_tree_probability),
+        "tree_probability_uncertainty": safe_float(tree_probability_uncertainty),
         "candidate_source": candidate.candidate_source,
+        "uncertainty_source": uncertainty_source,
     }
     return FeatureResult(row=row, distance_line=distance_line)
 
@@ -193,6 +203,15 @@ def compute_rgb_canopy_stats(image_bgr: np.ndarray | None, mask: np.ndarray) -> 
     green_ratio = np.mean(g / np.maximum(r + g + b, 1e-6))
     gray = 0.114 * b + 0.587 * g + 0.299 * r
     return clamp01(float(green_ratio)), float(np.mean(gray)), float(np.std(gray))
+
+
+def mean_map_value(value_map: np.ndarray | None, mask: np.ndarray, default: float) -> float:
+    if value_map is None or value_map.size == 0 or np.count_nonzero(mask) == 0:
+        return clamp01(default)
+    values = value_map[mask > 0]
+    if values.size == 0:
+        return clamp01(default)
+    return clamp01(float(np.mean(values)))
 
 
 def _bbox_from_binary(mask: np.ndarray) -> tuple[int, int, int, int]:

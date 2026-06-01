@@ -52,6 +52,9 @@ class SegmentationResult:
     confidence_map: np.ndarray
     source: str
     elapsed_seconds: float
+    entropy_map: np.ndarray | None = None
+    tree_probability_map: np.ndarray | None = None
+    num_classes: int = 0
     warning: str | None = None
 
 
@@ -115,12 +118,18 @@ class SegFormerSegmenter:
             )
             probabilities = torch.softmax(logits, dim=1)
             confidence, labels = probabilities.max(dim=1)
+            entropy = normalized_entropy(probabilities, epsilon=self.config.entropy_epsilon)
+            tree_probability = class_probability_map(probabilities, self._id_to_label(), self.config.tree_classes)
 
         label_map = labels[0].detach().cpu().numpy().astype(np.int32)
         confidence_map = confidence[0].detach().cpu().numpy().astype(np.float32)
+        entropy_map = entropy[0].detach().cpu().numpy().astype(np.float32)
+        tree_probability_map = tree_probability[0].detach().cpu().numpy().astype(np.float32)
         if (resized_h, resized_w) != (original_h, original_w):
             label_map = cv2.resize(label_map, (original_w, original_h), interpolation=cv2.INTER_NEAREST)
             confidence_map = cv2.resize(confidence_map, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+            entropy_map = cv2.resize(entropy_map, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+            tree_probability_map = cv2.resize(tree_probability_map, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
 
         class_masks = labels_to_class_masks(label_map, self._id_to_label(), (original_h, original_w))
         return SegmentationResult(
@@ -128,6 +137,9 @@ class SegFormerSegmenter:
             confidence_map=confidence_map,
             source="segformer",
             elapsed_seconds=time.perf_counter() - start,
+            entropy_map=np.clip(entropy_map, 0.0, 1.0),
+            tree_probability_map=np.clip(tree_probability_map, 0.0, 1.0),
+            num_classes=int(probabilities.shape[1]),
         )
 
     def _id_to_label(self) -> dict[int, str]:
@@ -198,3 +210,26 @@ def mean_confidence(confidence_map: np.ndarray, mask: np.ndarray) -> float:
     if pixels.size == 0:
         return 0.0
     return clamp01(float(np.mean(pixels)))
+
+
+def normalized_entropy(probabilities, epsilon: float):
+    import torch
+
+    class_count = max(int(probabilities.shape[1]), 2)
+    entropy = -torch.sum(probabilities * torch.log(probabilities + float(epsilon)), dim=1)
+    return entropy / np.log(float(class_count))
+
+
+def class_probability_map(probabilities, id_to_label: dict[int, str], labels: tuple[str, ...]):
+    import torch
+
+    wanted = set(labels)
+    class_indices = [
+        int(class_id)
+        for class_id, label in id_to_label.items()
+        if label in wanted and int(class_id) < probabilities.shape[1]
+    ]
+    if not class_indices:
+        return torch.zeros(probabilities.shape[0], probabilities.shape[2], probabilities.shape[3], device=probabilities.device)
+    selected = probabilities[:, class_indices, :, :]
+    return torch.clamp(torch.sum(selected, dim=1), 0.0, 1.0)

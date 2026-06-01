@@ -25,7 +25,7 @@ ROAD_COLOR = (255, 90, 20)
 TREE_COLOR = (0, 175, 0)
 LOW_VEGETATION_COLOR = (130, 220, 110)
 PRIORITY_COLOR = (255, 255, 255)
-TITLE = "UAV Roadside Canopy Inspection Priority Screening"
+TITLE = "UAV Roadside Canopy Uncertainty-Aware Inspection Priority"
 
 
 def save_visualization(
@@ -69,8 +69,11 @@ def save_visualization(
         if feature.distance_line:
             cv2.line(vis, feature.distance_line[0], feature.distance_line[1], (255, 0, 255), 2)
         label = (
-            f"T{row['tree_id']} P={row['inspection_priority_score']:.2f} {row['inspection_priority_level']} "
-            f"A={row['canopy_area_px']} I={row['canopy_irregularity']:.2f} D={row['distance_to_road_px']:.0f}"
+            f"T{row['tree_id']} "
+            f"B{row['base_inspection_score']:.2f} "
+            f"U{row['uncertainty_score']:.2f} "
+            f"P{row['final_priority_score']:.2f} "
+            f"{row['inspection_priority_level']}"
         )
         draw_label(vis, label, (x1, max(y1 - 8, 18)), color)
 

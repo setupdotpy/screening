@@ -39,6 +39,12 @@ LABEL_COLOR_TOLERANCE = 5
 EDGE_ROUGHNESS_MIN = 3.0
 EDGE_ROUGHNESS_MAX = 15.0
 USE_INSPECTION_PRIORITY_TERMINOLOGY = True
+ALPHA_UNCERTAINTY = 0.20
+ENTROPY_EPSILON = 1e-8
+USE_UNCERTAINTY_AWARE_PRIORITY = True
+UNCERTAINTY_WEIGHT_ENTROPY = 0.50
+UNCERTAINTY_WEIGHT_TREE_PROB = 0.30
+UNCERTAINTY_WEIGHT_INSTANCE = 0.20
 
 
 @dataclass(frozen=True)
@@ -46,6 +52,7 @@ class SegmentationConfig:
     model_name: str = "nvidia/segformer-b1-finetuned-cityscapes-1024-1024"
     inference_max_size: int = 1024
     default_confidence: float = 0.5
+    entropy_epsilon: float = ENTROPY_EPSILON
     vegetation_classes: Tuple[str, ...] = ("vegetation", "tree")
     tree_classes: Tuple[str, ...] = ("tree", "vegetation")
     low_vegetation_classes: Tuple[str, ...] = ("low vegetation", "terrain")
@@ -100,6 +107,14 @@ class RiskConfig:
     edge_roughness_min: float = EDGE_ROUGHNESS_MIN
     edge_roughness_max: float = EDGE_ROUGHNESS_MAX
     use_inspection_priority_terminology: bool = USE_INSPECTION_PRIORITY_TERMINOLOGY
+    alpha_uncertainty: float = ALPHA_UNCERTAINTY
+    entropy_epsilon: float = ENTROPY_EPSILON
+    use_uncertainty_aware_priority: bool = USE_UNCERTAINTY_AWARE_PRIORITY
+    uncertainty_weights: Tuple[float, float, float] = (
+        UNCERTAINTY_WEIGHT_ENTROPY,
+        UNCERTAINTY_WEIGHT_TREE_PROB,
+        UNCERTAINTY_WEIGHT_INSTANCE,
+    )
     weights: Tuple[float, float, float, float, float, float] = (0.30, 0.20, 0.15, 0.15, 0.10, 0.10)
 
 
@@ -174,9 +189,16 @@ CSV_FIELDS = [
     "road_overlap_ratio",
     "road_buffer_overlap_ratio",
     "normalized_canopy_size",
-    "inspection_priority_score",
+    "base_inspection_score",
+    "segmentation_entropy_uncertainty",
+    "mean_tree_probability",
+    "tree_probability_uncertainty",
+    "instance_merge_uncertainty",
+    "uncertainty_score",
+    "final_priority_score",
     "inspection_priority_level",
     "candidate_source",
+    "uncertainty_source",
 ]
 
 

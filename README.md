@@ -2,13 +2,26 @@
 
 ## Overview
 
-This project performs preliminary inspection-priority screening for roadside tree/canopy regions in UAV RGB imagery. It targets UAVid-style oblique aerial scenes containing roads, roadside trees, low vegetation, buildings, vehicles, humans, and background clutter.
+This project performs preliminary inspection-priority screening for roadside tree and canopy regions in UAV RGB imagery. It targets UAVid-style oblique aerial scenes containing roads, roadside trees, low vegetation, buildings, vehicles, humans, and background clutter.
 
-The proposed score should not be interpreted as a direct estimate of tree failure probability. It is a preliminary image-based ranking score for selecting roadside canopy regions that may require further inspection.
+The output is not a tree-failure probability. It is an image-based ranking score for selecting roadside canopy regions that may require further human inspection.
 
-The pipeline uses UAVid semantic labels directly when available. If labels are not available, it falls back to the existing SegFormer/SAM segmentation path.
+The pipeline supports two segmentation modes:
+
+- UAVid label mode: use ground-truth UAVid label masks directly for controlled testing.
+- Model mode: use a SegFormer semantic segmentation model, optionally fine-tuned on UAVid, with SAM used only as a mask proposal splitter.
 
 ## Setup
+
+Recommended conda environment:
+
+```bash
+cd ~/screening/roadside_tree_risk
+conda activate screening
+pip install -r requirements.txt
+```
+
+Virtual environment alternative:
 
 ```bash
 cd ~/screening/roadside_tree_risk
@@ -18,16 +31,11 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-With the project conda environment:
-
-```bash
-cd ~/screening/roadside_tree_risk
-conda activate screening
-```
+If PyTorch must be installed for a specific CUDA version, install the matching PyTorch build first, then install the remaining requirements.
 
 ## Data Layout
 
-Place UAV RGB images in:
+For ordinary runs, place UAV RGB images in:
 
 ```text
 data/images/
@@ -41,9 +49,19 @@ data/labels/
 
 The label loader matches files by image stem and supports common suffixes such as `_label`, `_labelTrainIds`, `_gt`, `_gtFine_labelIds`, `_gtFine_color`, and `_color`.
 
-## Running
+The local UAVid archive used during development has this layout:
 
-Use UAVid labels:
+```text
+data/archive/uavid_train/seq1/Images
+data/archive/uavid_train/seq1/Labels
+data/archive/uavid_val/seq16/Images
+data/archive/uavid_val/seq16/Labels
+data/archive/uavid_test/<seq>/Images
+```
+
+## Running The Pipeline
+
+Use UAVid label masks:
 
 ```bash
 python src/main.py \
@@ -53,41 +71,63 @@ python src/main.py \
   --use_uavid_labels
 ```
 
-Use model fallback:
+Use the default SegFormer model:
 
 ```bash
-python src/main.py --image_dir data/images --output_dir outputs
+python src/main.py \
+  --image_dir data/images \
+  --output_dir outputs
 ```
+
+Use the fine-tuned UAVid checkpoint:
+
+```bash
+python src/main.py \
+  --image_dir data/uavid_test_one_per_seq \
+  --output_dir outputs_finetuned_uavid \
+  --segformer_model models/segformer-uavid-continued-10/best \
+  --inference_size 768
+```
+
+Run a bounded seq1-only test from the archive:
+
+```bash
+python src/main.py \
+  --image_dir data/archive/uavid_train/seq1/Images \
+  --output_dir outputs_uncertainty_seq1_archive20_continued10 \
+  --segformer_model models/segformer-uavid-continued-10/best \
+  --inference_size 768 \
+  --max_images 20
+```
+
+## Pipeline
+
+```text
+Input UAV RGB image
+-> load UAVid label mask or predict SegFormer segmentation
+-> extract road, tree/canopy, and low vegetation masks
+-> split predicted vegetation with SAM proposals when available
+-> fall back to connected components when SAM splitting is unavailable
+-> filter roadside canopy candidates
+-> compute road-context features
+-> compute canopy-structure and RGB proxy features
+-> compute base_inspection_score
+-> compute uncertainty_score
+-> compute final_priority_score
+-> save CSV, canopy masks, and visualizations
+```
+
+## SegFormer And SAM
+
+SegFormer provides semantic context: road, tree/canopy, low vegetation, buildings, cars, humans, and background clutter. For UAVid work, the useful classes are Road, Tree, Low vegetation, Building, Static car, Moving car, Human, and Background clutter.
+
+SegFormer masks can merge nearby trees into large connected canopy blobs. SAM is therefore used only as an instance-like mask proposal splitter. SAM proposals are intersected with the SegFormer tree/canopy mask so that cars, buildings, people, and roads are not accepted only because SAM proposed them.
+
+If SAM is unavailable, fails to load, returns no masks, or no SAM masks pass vegetation overlap filtering, the pipeline falls back to connected components on the tree/canopy mask.
 
 ## Fine-Tuning SegFormer On UAVid
 
-This project includes a lightweight fine-tuning script for the labeled UAVid split:
-
-```text
-data/archive/uavid_train/seq1  images=600 labels=600
-data/archive/uavid_val/seq16   images=70  labels=70
-```
-
-The local GPU is suitable for SegFormer-B0 with conservative settings: `512` image size, batch size `1`, gradient accumulation, and CUDA mixed precision.
-
-Smoke test:
-
-```bash
-conda run -n screening python -u src/train_segformer_uavid.py \
-  --train_dir data/archive/uavid_train \
-  --val_dir data/archive/uavid_val \
-  --output_dir models/segformer-uavid-smoke \
-  --image_size 256 \
-  --epochs 1 \
-  --batch_size 1 \
-  --gradient_accumulation_steps 1 \
-  --max_train_samples 2 \
-  --max_val_samples 2 \
-  --num_workers 0 \
-  --eval_every_steps 0
-```
-
-Recommended full fine-tuning command for this machine:
+The training script fine-tunes SegFormer on UAVid-style image/label pairs:
 
 ```bash
 conda run -n screening python -u src/train_segformer_uavid.py \
@@ -104,69 +144,79 @@ conda run -n screening python -u src/train_segformer_uavid.py \
   --eval_every_steps 100
 ```
 
-Run prediction with the fine-tuned checkpoint:
-
-```bash
-python src/main.py \
-  --image_dir data/uavid_test_one_per_seq \
-  --output_dir outputs_finetuned_uavid \
-  --segformer_model models/segformer-uavid/best \
-  --inference_size 768
-```
-
-## Pipeline
+The continued checkpoint used in recent tests is:
 
 ```text
-Input UAV image
--> load UAVid label or predicted segmentation
--> extract road mask
--> extract tree mask
--> extract low vegetation mask
--> connected components on tree mask
--> filter tree/canopy candidates
--> compute road-context features
--> compute canopy-structure features
--> compute inspection_priority_score
--> save CSV and visualization
+models/segformer-uavid-continued-10/best
 ```
 
-## Canopy Indicators
+Recent validation metrics for that checkpoint:
 
-The system uses image-space canopy proxies, including:
+```text
+mean_iou = 0.5107
+pixel_accuracy = 0.8297
+road_iou = 0.6833
+tree_iou = 0.7141
+low_vegetation_iou = 0.6087
+```
+
+## Canopy Features
+
+For each accepted canopy candidate, the CSV includes:
 
 - canopy area, width, height, and diameter
 - canopy compactness
 - canopy circularity
-- canopy asymmetry
+- canopy asymmetry score
 - canopy gap ratio
 - canopy edge roughness
 - canopy irregularity
 - RGB green ratio
 - RGB brightness mean and standard deviation
 - distance to road
-- road and road-buffer overlap
+- road overlap and road-buffer overlap
+- normalized canopy size
 
-Large, irregular, sparse, or asymmetric canopies near roads may deserve further inspection. These indicators do not prove structural instability.
+These are image-space proxies. Large, irregular, sparse, or asymmetric canopy regions near roads may deserve earlier inspection, but these features do not diagnose tree health or structural failure.
 
-## Inspection Priority Score
+## Uncertainty-Aware Inspection Priority
+
+The final priority score includes a base inspection score and an uncertainty score.
 
 ```text
-inspection_priority_score =
+base_inspection_score =
 0.30 * inverse_distance_to_road
 + 0.20 * road_buffer_overlap_ratio
 + 0.15 * normalized_canopy_size
 + 0.15 * canopy_irregularity
 + 0.10 * canopy_gap_ratio
 + 0.10 * canopy_asymmetry_score
+
+uncertainty_score =
+0.50 * segmentation_entropy_uncertainty
++ 0.30 * tree_probability_uncertainty
++ 0.20 * instance_merge_uncertainty
+
+final_priority_score =
+clip(base_inspection_score + 0.20 * uncertainty_score, 0, 1)
 ```
 
-Levels:
+Priority levels:
 
-- Low: `inspection_priority_score < 0.33`
-- Medium: `0.33 <= inspection_priority_score < 0.66`
-- High: `inspection_priority_score >= 0.66`
+- Low: `final_priority_score < 0.33`
+- Medium: `0.33 <= final_priority_score < 0.66`
+- High: `final_priority_score >= 0.66`
 
-This is a ranking score for inspection order, not a hazard probability.
+Uncertainty terms:
+
+- `segmentation_entropy_uncertainty`: mean normalized SegFormer entropy inside the canopy mask.
+- `mean_tree_probability`: mean SegFormer tree probability inside the canopy mask.
+- `tree_probability_uncertainty`: `1 - mean_tree_probability`.
+- `instance_merge_uncertainty`: high when a canopy component is much larger than the median accepted canopy area in the same image.
+
+If UAVid ground-truth labels are used, entropy uncertainty is set to zero and tree probability is set to one because label masks do not provide model probability distributions. The uncertainty source is recorded as `label_mask_no_entropy`. For model predictions, the uncertainty source is `model_probabilities`.
+
+The final score is not a tree-failure probability. It is an image-based inspection-priority score that increases when a canopy region is both potentially relevant to the roadway and uncertain enough to require further human inspection.
 
 ## Outputs
 
@@ -182,25 +232,56 @@ Visualizations:
 outputs/visualizations/*_priority.jpg
 ```
 
-Canopy masks:
+Accepted canopy masks:
 
 ```text
 outputs/masks/*_canopy_*.png
 ```
 
-Visualizations show road masks, tree/canopy masks, low vegetation masks, inspection-priority candidates, bounding boxes, priority labels, canopy area, canopy irregularity, and distance lines.
+Visualization labels use:
 
-## Limits Of RGB-Only UAV Imagery
+```text
+T{id} B{base_score} U{uncertainty_score} P{final_score} {level}
+```
 
-Single UAV RGB images cannot determine:
+## Recent Seq1 Test
 
-- tree lean angle
-- trunk decay
-- root damage
-- internal disease
-- true tree height
-- trunk diameter
-- physical road clearance
-- metric distance without calibration
+A bounded 20-image seq1 archive test with `models/segformer-uavid-continued-10/best` produced:
 
-Canopy features are image-space proxies. UAV LiDAR, calibrated multi-view reconstruction, or field inspection is required for real hazard assessment.
+```text
+images processed = 20
+accepted canopies = 510
+visualizations = 20
+mask files = 510
+Low priority = 112
+Medium priority = 398
+High priority = 0
+mean base_inspection_score = 0.3365
+mean uncertainty_score = 0.2658
+mean final_priority_score = 0.3897
+```
+
+The uncertainty term changed the ranking by increasing final scores by `0.20 * uncertainty_score`. It improves inspection-priority ranking behavior, not segmentation accuracy.
+
+## Limitations
+
+Because the system uses a single RGB UAV image, extracted features are image-space proxies. True tree height, trunk diameter, lean angle, and physical distance cannot be estimated reliably without camera calibration, multi-view reconstruction, or UAV LiDAR.
+
+Additional limitations:
+
+- no true 3D geometry
+- no metric tree height
+- no physical clearance estimate
+- no reliable trunk location
+- no trunk decay detection
+- no root damage detection
+- no internal disease detection
+- canopy asymmetry is not tree lean
+- SAM is not tree-specific
+- UAVid semantic labels are not individual tree ground truth
+- overlapping canopies may still merge
+- uncertainty is an engineering approximation, not Bayesian posterior uncertainty
+
+## Future Work
+
+Future work should include UAV LiDAR, calibrated multi-view reconstruction, individual tree instance segmentation, temporal monitoring, field validation, and better probabilistic uncertainty estimation.

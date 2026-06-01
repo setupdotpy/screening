@@ -7,6 +7,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import List
 
+import numpy as np
+
 from config import CSV_FIELDS, PipelineConfig, RoadConfig, SamConfig, SegmentationConfig, ensure_output_dirs
 from candidate_extraction import build_connected_component_candidates, normalize_candidate_masks
 from feature_extraction import extract_features
@@ -184,6 +186,7 @@ def run_pipeline(
             road_distance_map = distance_map_to_mask(road_context.combined_mask)
             road_buffer_mask = distance_buffer_from_map(road_distance_map, config.risk.road_buffer_radius_px)
             road_edge_pixels = mask_boundary_pixels(road_context.combined_mask)
+            uncertainty_source = "label_mask_no_entropy" if used_uavid_labels else "model_probabilities"
             for tree_id, candidate in enumerate(accepted_candidates, start=1):
                 feature_result = extract_features(
                     image_path.name,
@@ -198,11 +201,22 @@ def run_pipeline(
                     road_buffer_mask=road_buffer_mask,
                     road_edge_pixels=road_edge_pixels,
                     image_bgr=image,
+                    segmentation_entropy_map=segmentation.entropy_map,
+                    tree_probability_map=segmentation.tree_probability_map,
+                    uncertainty_source=uncertainty_source,
                 )
-                scored_row = score_inspection_priority(feature_result.row, config.risk)
+                feature_results.append(feature_result)
+
+            canopy_areas = [float(result.row["canopy_area_px"]) for result in feature_results]
+            median_canopy_area = float(np.median(canopy_areas)) if canopy_areas else 0.0
+            for feature_result in feature_results:
+                scored_row = score_inspection_priority(
+                    feature_result.row,
+                    config.risk,
+                    median_canopy_area=median_canopy_area,
+                )
                 rows.append(scored_row)
                 image_rows.append(scored_row)
-                feature_results.append(feature_result)
 
             save_masks(image_path.name, accepted_candidates, output_dir)
             sam_used = bool(split_stats.get("used_sam", False))
@@ -227,7 +241,7 @@ def run_pipeline(
             )
 
             average_priority = (
-                sum(float(row["inspection_priority_score"]) for row in image_rows) / len(image_rows)
+                sum(float(row["final_priority_score"]) for row in image_rows) / len(image_rows)
                 if image_rows
                 else 0.0
             )

@@ -1,11 +1,20 @@
-ultralytics
+# Install the PyTorch build that matches the local CUDA version first when needed.
 torch
 torchvision
 torchaudio
+
+# SegFormer / Hugging Face segmentation
 transformers
 timm
 accelerate
 sentencepiece
+safetensors
+huggingface-hub
+
+# SAM proposal splitting
+ultralytics
+
+# Image processing and scientific computing
 opencv-python
 pillow
 matplotlib
@@ -13,5 +22,7 @@ scipy
 scikit-image
 numpy
 pandas
+
+# Training and utility support
 tqdm
 seaborn

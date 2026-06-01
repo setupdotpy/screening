@@ -58,6 +58,9 @@ def load_uavid_segmentation(
         confidence_map=confidence_map,
         source=f"uavid_label:{label_path.name}",
         elapsed_seconds=0.0,
+        entropy_map=np.zeros(target_shape, dtype=np.float32),
+        tree_probability_map=np.ones(target_shape, dtype=np.float32),
+        num_classes=len(UAVID_CLASSES),
     )
 
 
