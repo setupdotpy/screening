@@ -69,13 +69,47 @@ then install the remaining requirements.
 
 ## Data Layout
 
-For normal runs, put images here:
+The dataset is not committed to this repository. During development, UAVid v1
+was downloaded from Kaggle and unpacked locally. The expected local layout is:
+
+```text
+data/archive/
+  uavid_train/
+    seq1/
+      Images/
+      Labels/
+    ...
+  uavid_val/
+    seq16/
+      Images/
+      Labels/
+    ...
+  uavid_test/
+    <seq>/
+      Images/
+```
+
+How the data is used:
+
+- `data/archive/uavid_train/` is used for fine-tuning SegFormer.
+- `data/archive/uavid_val/` is used for validation during fine-tuning and
+  checkpoint selection.
+- `data/archive/uavid_train/seq1/Images` is also used for a small train-derived
+  debugging run. This verifies that the preliminary model and downstream
+  pipeline can produce masks, candidates, scores, and visualizations under
+  familiar conditions. It is not used as generalization evidence.
+- `data/uavid_test_one_per_seq/` contains one selected image from each UAVid
+  test sequence. This is the main unseen test set used for result discussion and
+  failure analysis because these scenes were not used during fine-tuning.
+
+For custom runs outside the UAVid archive, place RGB images here:
 
 ```text
 data/images/
 ```
 
-If using UAVid labels for controlled testing, put matching labels here:
+If using semantic label masks for controlled testing, place matching labels
+here:
 
 ```text
 data/labels/
@@ -84,16 +118,6 @@ data/labels/
 The label loader matches files by image stem and supports suffixes such as
 `_label`, `_labelTrainIds`, `_gt`, `_gtFine_labelIds`, `_gtFine_color`, and
 `_color`.
-
-During development, the local UAVid archive used this layout:
-
-```text
-data/archive/uavid_train/seq1/Images
-data/archive/uavid_train/seq1/Labels
-data/archive/uavid_val/seq16/Images
-data/archive/uavid_val/seq16/Labels
-data/archive/uavid_test/<seq>/Images
-```
 
 UAVid links:
 
